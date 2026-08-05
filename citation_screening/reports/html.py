@@ -4,11 +4,21 @@ from html import escape
 from typing import Any, Dict, List
 
 
-STATUS_CLASS = {"匹配": "match", "存疑": "doubt", "领域不符": "mismatch", "未获取数据": "nodata"}
+STATUS_CLASS = {
+    "匹配": "match", "存疑": "doubt", "领域不符": "mismatch",
+    "未获取数据": "nodata", "引用无关内容": "irrelevant",
+}
 
 
 def build_html_report(filename: str, results: List[Dict[str, Any]]) -> str:
     counts = Counter(item.get("result", "存疑") for item in results)
+    unrelated_count = counts["引用无关内容"]
+    percentage_total = max(0, len(results) - unrelated_count)
+
+    def percentage(label: str) -> str:
+        if not percentage_total:
+            return "0.0%"
+        return f"{counts[label] * 100 / percentage_total:.1f}%"
     sources = sorted({item.get("metadata_source") or "未获取" for item in results})
     source_options = "".join(
         f'<option value="{escape(source, quote=True)}">{escape(source)}</option>' for source in sources
@@ -84,7 +94,8 @@ input,select,button{{height:38px;border:1px solid #cfd5dc;border-radius:6px;back
 th{{position:sticky;top:0;z-index:2;background:var(--head);font-size:12px;text-align:left;color:#4b5563;border-bottom:1px solid var(--line);padding:10px 9px}}
 td{{vertical-align:top;border-bottom:1px solid #e8ebee;padding:11px 9px;line-height:1.52;background:#fff;overflow-wrap:anywhere}} tbody tr:last-child td{{border-bottom:0}} tbody tr:hover td{{background:#fafbfd}} tr[hidden]{{display:none}}
 .number{{width:46px;text-align:center;color:#98a2b3}} .status-cell{{width:112px}} .ref{{width:58px;text-align:center;font-weight:650}} .claim{{width:34%}} .paper{{width:25%}} .reason{{width:25%}}
-.status{{display:inline-block;font-size:12px;font-weight:650;padding:3px 8px;border-radius:4px;white-space:nowrap}} .status.match{{color:var(--green);background:var(--green-bg)}} .status.doubt{{color:var(--amber);background:var(--amber-bg)}} .status.mismatch{{color:var(--red);background:var(--red-bg)}} .status.nodata{{color:var(--gray);background:var(--gray-bg)}} .review-badge{{display:block;width:max-content;margin-top:5px;padding:2px 6px;border:1px solid #84adff;border-radius:4px;color:#175cd3;background:#eff4ff;font-size:11px;white-space:nowrap}}
+.status{{display:inline-block;font-size:12px;font-weight:650;padding:3px 8px;border-radius:4px;white-space:nowrap}} .status.match{{color:var(--green);background:var(--green-bg)}} .status.doubt{{color:var(--amber);background:var(--amber-bg)}} .status.mismatch{{color:var(--red);background:var(--red-bg)}} .status.nodata{{color:var(--gray);background:var(--gray-bg)}} .status.irrelevant{{color:#344054;background:#eaecf0}} .review-badge{{display:block;width:max-content;margin-top:5px;padding:2px 6px;border:1px solid #84adff;border-radius:4px;color:#175cd3;background:#eff4ff;font-size:11px;white-space:nowrap}}
+.percent{{font-size:12px;color:var(--muted)}}
 .target{{font-weight:550}} .title{{font-weight:550}} .source{{color:var(--muted);font-size:12px;margin-top:5px}} details{{margin-top:7px;color:var(--muted);font-size:12px}} summary{{cursor:pointer;user-select:none}} .details-body{{border-left:2px solid #d9dee5;margin-top:7px;padding-left:9px}} .details-body div+div{{margin-top:5px}} a{{color:#175cd3;text-decoration:none}} a:hover{{text-decoration:underline}}
 .evidence{{color:#344054;background:#f8fafc;border:1px solid #e4e7ec;border-radius:5px;padding:8px;line-height:1.6}}
 .empty{{padding:34px;text-align:center;color:var(--muted)}} .notice{{color:var(--muted);font-size:12px;margin-top:16px;line-height:1.6}}
@@ -95,14 +106,16 @@ td{{vertical-align:top;border-bottom:1px solid #e8ebee;padding:11px 9px;line-hei
 <div class="meta-line">稿件：{escape(filename)}　生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 <div class="summary">
   <span class="summary-item"><b>{len(results)}</b> 总计</span>
-  <span class="summary-item match"><b>{counts['匹配']}</b> 匹配</span>
-  <span class="summary-item doubt"><b>{counts['存疑']}</b> 存疑</span>
-  <span class="summary-item mismatch"><b>{counts['领域不符']}</b> 领域不符</span>
-  <span class="summary-item"><b>{counts['未获取数据']}</b> 未获取数据</span>
+  <span class="summary-item match"><b>{counts['匹配']}</b> 匹配 <span class="percent">{percentage('匹配')}</span></span>
+  <span class="summary-item doubt"><b>{counts['存疑']}</b> 存疑 <span class="percent">{percentage('存疑')}</span></span>
+  <span class="summary-item mismatch"><b>{counts['领域不符']}</b> 领域不符 <span class="percent">{percentage('领域不符')}</span></span>
+  <span class="summary-item"><b>{counts['未获取数据']}</b> 未获取数据 <span class="percent">{percentage('未获取数据')}</span></span>
+  <span class="summary-item"><b>{unrelated_count}</b> 引用无关内容</span>
 </div>
+<div class="meta-line">占比统计分母：{percentage_total} 条；“引用无关内容”不计入分母及任何类别占比。</div>
 <div class="toolbar">
   <input id="keyword" type="search" placeholder="搜索正文句子、题名、理由或 Ref.…" autocomplete="off">
-  <select id="statusFilter"><option value="">全部结果</option><option value="匹配">匹配</option><option value="存疑">存疑</option><option value="领域不符">领域不符</option><option value="未获取数据">未获取数据</option></select>
+  <select id="statusFilter"><option value="">全部结果</option><option value="匹配">匹配</option><option value="存疑">存疑</option><option value="领域不符">领域不符</option><option value="未获取数据">未获取数据</option><option value="引用无关内容">引用无关内容</option></select>
   <select id="sourceFilter"><option value="">全部数据来源</option>{source_options}</select>
   <button id="reset" type="button">清除筛选</button>
   <div class="visible-count" id="visibleCount"></div>

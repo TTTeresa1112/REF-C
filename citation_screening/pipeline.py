@@ -142,7 +142,7 @@ def execute_screening(
     results.sort(key=lambda x: (x["sentence_order"], int(x["label"]) if str(x["label"]).isdigit() else 999999))
     counts = {
         label: sum(1 for item in results if item["result"] == label)
-        for label in ("匹配", "存疑", "领域不符", "未获取数据")
+        for label in ("匹配", "存疑", "领域不符", "未获取数据", "引用无关内容")
     }
     _report(progress_callback, 100, "引用内容初筛完成。")
     return {

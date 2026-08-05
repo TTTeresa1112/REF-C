@@ -135,7 +135,7 @@ def execute_fulltext_review(
 
     counts = {
         label: sum(1 for item in results if item.get("result") == label)
-        for label in ("匹配", "存疑", "领域不符", "未获取数据")
+        for label in ("匹配", "存疑", "领域不符", "未获取数据", "引用无关内容")
     }
     _report(progress_callback, 100, "全文复核完成。")
     return {

@@ -9,6 +9,8 @@ from docx.oxml.ns import qn
 from citation_screening.parsers import parse_manuscript
 from citation_screening.fulltext_review import execute_fulltext_review, prepare_fulltext_review
 from citation_screening.pipeline import execute_screening, prepare_screening, run_screening
+from citation_screening.reports import build_html_report
+from citation_screening.services.deepseek import _extract_json
 
 
 class ParserTests(unittest.TestCase):
@@ -109,6 +111,17 @@ class ParserTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_unrelated_header_content_category_and_percentage(self):
+        parsed = _extract_json('{"result":"引用无关内容","reason":"作者单位编号"}')
+        self.assertEqual(parsed["result"], "引用无关内容")
+        html = build_html_report("paper.docx", [
+            {"result": "匹配", "sentence_text": "Scientific claim.", "label": "1"},
+            {"result": "引用无关内容", "sentence_text": "[1] University Hospital", "label": "1"},
+        ])
+        self.assertIn("匹配 <span class=\"percent\">100.0%</span>", html)
+        self.assertIn("占比统计分母：1 条", html)
+        self.assertIn('<option value="引用无关内容">', html)
+
     @patch("citation_screening.pipeline.fetch_metadata")
     def test_missing_abstract_is_separate_from_doubt(self, fetch_metadata):
         fetch_metadata.return_value = {

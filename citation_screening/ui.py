@@ -80,14 +80,31 @@ def _login_panel() -> bool:
     return False
 
 
+def _download_result_buttons(data, project_id: str, key_prefix: str) -> None:
+    export = {key: value for key, value in data.items() if key != "html"}
+    version_label = "最终" if data.get("review_stage") == "fulltext" else "当前"
+    col_html, col_json = st.columns(2)
+    col_html.download_button(
+        f"下载{version_label} HTML 报告", data=data["html"].encode("utf-8"),
+        file_name=_download_name(project_id, "html"), mime="text/html",
+        use_container_width=True, key=f"{key_prefix}_html",
+    )
+    col_json.download_button(
+        f"下载{version_label} JSON 数据", data=json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=_download_name(project_id, "json"), mime="application/json",
+        use_container_width=True, key=f"{key_prefix}_json",
+    )
+
+
 def _show_results(data, project_id: str) -> None:
     stats = data["statistics"]
     st.divider()
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("匹配", stats.get("匹配", 0))
     col2.metric("存疑", stats.get("存疑", 0))
     col3.metric("领域不符", stats.get("领域不符", 0))
     col4.metric("未获取数据", stats.get("未获取数据", 0))
+    col5.metric("引用无关内容", stats.get("引用无关内容", 0))
     st.caption(f"预计调用 {data.get('estimated_calls', 0)} 次；实际发出 {data.get('actual_calls', 0)} 次 DeepSeek 请求。")
 
     rows = [{
@@ -101,26 +118,27 @@ def _show_results(data, project_id: str) -> None:
         "简要理由": item["reason"],
     } for item in data["results"]]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    export = {key: value for key, value in data.items() if key != "html"}
-    col_html, col_json = st.columns(2)
-    col_html.download_button("下载 HTML 报告", data=data["html"].encode("utf-8"), file_name=_download_name(project_id, "html"), mime="text/html", use_container_width=True)
-    col_json.download_button("下载 JSON 数据", data=json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8"), file_name=_download_name(project_id, "json"), mime="application/json", use_container_width=True)
+    _download_result_buttons(data, project_id, "current_result")
 
 
-def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_id: str, quota) -> None:
+def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_id: str, quota):
     """Offer a separately metered, open-full-text pass for doubtful rows only."""
     doubtful = sum(1 for item in data.get("results", []) if item.get("result") == "存疑")
     if not doubtful:
-        return
+        return data
+    try:
+        quota = store.quota_status(user["id"])
+    except QuotaStoreError:
+        pass
     st.divider()
-    st.markdown("#### 存疑项开放全文复核")
+    st.markdown("#### 下一步（可选）：核查存疑项全文")
     st.caption(
         "只查找合法开放获取的 PMC/Europe PMC XML 或开放 PDF；PDF 会在本地提取文本。"
         "系统先选出最多 8 个高相关段落，再逐段交给 DeepSeek，找到明确支持证据后立即停止。"
     )
     prepared = st.session_state.get("citation_fulltext_prepared")
     if prepared is None and st.button(
-        f"查找 {doubtful} 个存疑项的开放全文并估算调用量",
+        f"继续核查 {doubtful} 个存疑项",
         use_container_width=True,
         key="prepare_fulltext_review",
     ):
@@ -141,7 +159,7 @@ def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_
                 ).hexdigest()
                 prepared["project_id"] = project_id
                 st.session_state["citation_fulltext_prepared"] = prepared
-                st.success("全文候选段落已准备好；此步骤没有调用 DeepSeek，也没有扣除额度。")
+                st.success("已找到可核查的全文段落。请确认下面的最大调用量后继续。")
             except Exception as exc:
                 st.error(f"开放全文准备失败：{exc}")
             finally:
@@ -149,7 +167,7 @@ def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_
 
     prepared = st.session_state.get("citation_fulltext_prepared")
     if not prepared:
-        return
+        return data
     cols = st.columns(4)
     cols[0].metric("存疑项", prepared["doubtful_count"])
     cols[1].metric("找到开放全文", prepared["fulltexts_found"])
@@ -159,15 +177,13 @@ def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_
     st.caption("这是上限；每个引用一旦找到支持证据就停止，实际调用量通常更少，并按实际次数结算。")
     if estimated == 0:
         st.info("没有找到可用于复核的开放全文，因此不会调用 DeepSeek。原结果保持不变。")
-        if st.button("关闭本次全文复核", key="discard_empty_fulltext"):
-            st.session_state.pop("citation_fulltext_prepared", None)
-            st.rerun()
+        st.session_state.pop("citation_fulltext_prepared", None)
     elif estimated > MAX_CALLS_PER_TASK:
         st.error(f"最多需要 {estimated} 次调用，超过单次任务上限 {MAX_CALLS_PER_TASK} 次。")
     elif estimated > quota["remaining"]:
         st.error(f"最多需要 {estimated} 次调用，但今日只剩 {quota['remaining']} 次额度。")
     elif st.button(
-        f"确认预扣最多 {estimated} 次并开始全文复核",
+        f"开始全文核查（最多 {estimated} 次调用）",
         type="primary",
         use_container_width=True,
         key=f"execute_fulltext_{prepared['task_id']}",
@@ -194,10 +210,11 @@ def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_
                 st.session_state.pop("citation_fulltext_prepared", None)
                 try:
                     store.complete_task(prepared["task_id"], reviewed["actual_calls"], reviewed)
-                    st.success("全文复核完成，结果已保存 24 小时，额度已按实际调用次数结算。")
+                    st.success("全文核查完成。下方是已经更新的最终报告，可直接下载；结果同时保存 24 小时。")
                 except QuotaStoreError:
                     st.warning("全文复核已完成并保留在当前页面，但云端保存暂时失败；请立即下载结果并联系管理员核对额度。")
-                st.rerun()
+                _download_result_buttons(reviewed, project_id, f"fulltext_final_{prepared['task_id']}")
+                return reviewed
             except Exception as exc:
                 try:
                     store.fail_task(prepared["task_id"], 0, str(exc))
@@ -207,6 +224,7 @@ def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_
                 st.error(f"全文复核失败：{exc}")
             finally:
                 system_status["lock"].release()
+    return st.session_state.get("citation_screening_result", data)
 
 
 def _show_recent_tasks(store: QuotaStore, user) -> None:
@@ -388,8 +406,11 @@ def show_citation_screening(system_status) -> None:
 
     data = st.session_state.get("citation_screening_result")
     if data:
-        _show_results(data, project_id or st.session_state.get("screen_project_id", ""))
-        _show_fulltext_review(
+        active_project = project_id or st.session_state.get("screen_project_id", "")
+        result_area = st.empty()
+        data = _show_fulltext_review(
             store, user, system_status, data,
-            project_id or st.session_state.get("screen_project_id", ""), quota,
+            active_project, quota,
         )
+        with result_area.container():
+            _show_results(data, active_project)
