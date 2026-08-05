@@ -22,6 +22,7 @@ from generate_json import (
     extract_doi_from_text
 )
 from generate_html import generate_html_report
+from citation_screening.ui import show_citation_screening
 
 # 页面配置
 st.set_page_config(
@@ -477,8 +478,13 @@ def main():
         unsafe_allow_html=True
     )
 
-    # --- 标签页：开始核验 / 使用说明 / 关于 ---
-    tab_check, tab_guide, tab_about = st.tabs(["开始核验", "使用说明", "关于"])
+    # --- 标签页：参考文献核验 / 引用内容初筛 / 使用说明 / 关于 ---
+    tab_check, tab_screen, tab_guide, tab_about = st.tabs(
+        ["开始核验", "引用内容初筛", "使用说明", "关于"]
+    )
+
+    with tab_screen:
+        show_citation_screening(system_status)
 
     # ===== 使用说明 =====
     with tab_guide:

@@ -27,6 +27,8 @@ ENV/
 
 # Environment variables
 .env
+.streamlit/secrets.toml
+setup_handoff.txt
 
 # IDE
 .idea/
