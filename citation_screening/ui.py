@@ -12,6 +12,7 @@ from generate_json import process_single_reference_new
 
 from .auth import QuotaStore, QuotaStoreError
 from .pipeline import execute_screening, prepare_screening
+from .reports import build_html_report
 
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -125,9 +126,13 @@ def _show_recent_tasks(store: QuotaStore, user) -> None:
             elif task.get("result_payload"):
                 payload = task["result_payload"]
                 project = os.path.splitext(filename)[0]
+                latest_html = build_html_report(
+                    payload.get("filename") or filename,
+                    payload.get("results", []),
+                )
                 html_col, json_col = st.columns(2)
                 html_col.download_button(
-                    "下载 HTML 报告", data=(task.get("report_html") or "").encode("utf-8"),
+                    "下载 HTML 报告", data=latest_html.encode("utf-8"),
                     file_name=_download_name(project, "html"), mime="text/html",
                     use_container_width=True, key=f"history_html_{task['task_id']}",
                 )

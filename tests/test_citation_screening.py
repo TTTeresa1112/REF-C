@@ -120,6 +120,9 @@ class PipelineTests(unittest.TestCase):
         data = run_screening(xml, "paper.xml")
         self.assertEqual(data["statistics"]["匹配"], 1)
         self.assertIn("REF-C 引用内容初筛报告", data["html"])
+        self.assertIn('id="statusFilter"', data["html"])
+        self.assertIn('id="sourceFilter"', data["html"])
+        self.assertIn("目标引用句", data["html"])
         self.assertEqual(data["results"][0]["result"], "匹配")
 
     @patch("citation_screening.pipeline.screen_pair")
