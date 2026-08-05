@@ -10,7 +10,8 @@ from typing import Dict, Any, Optional
 # Constants
 NCBI_API_KEY = os.getenv("NCBI_API_KEY")
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
-USER_AGENT = "RefListGenerator/1.0 (mailto:teresa.l@explorationpub.com)"
+MY_EMAIL = os.getenv("MY_EMAIL", "you@example.com")
+USER_AGENT = f"RefListGenerator/1.0 (mailto:{MY_EMAIL})"
 
 def clean_title(title: str) -> str:
     """
@@ -45,7 +46,7 @@ def search_pubmed(query: str) -> Optional[str]:
         "retmode": "json",
         "retmax": 1,
         "tool": "RefListGen",
-        "email": "teresa.l@explorationpub.com"
+        "email": MY_EMAIL
     }
     
     if NCBI_API_KEY:
@@ -78,7 +79,7 @@ def get_pubmed_details(pmid: str) -> Dict[str, str]:
         "id": pmid,
         "retmode": "json",
         "tool": "RefListGen",
-        "email": "teresa.l@explorationpub.com"
+        "email": MY_EMAIL
     }
     
     if NCBI_API_KEY:

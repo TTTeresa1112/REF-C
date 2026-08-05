@@ -15,7 +15,7 @@ from typing import List, Optional, Tuple, Any, Dict, Callable
 
 # 加载环境变量
 load_dotenv()
-MY_EMAIL = os.getenv("MY_EMAIL", "teresa.l@explorationpub.com")
+MY_EMAIL = os.getenv("MY_EMAIL", "you@example.com")
 NCBI_API_KEY = os.getenv("NCBI_API_KEY") 
 USER_AGENT = f"ref for Match scopus/1.0.test (Teresa L <{MY_EMAIL}>)"
 
