@@ -84,7 +84,7 @@ def _semantic_scholar(identifier: str, id_type: str) -> Dict[str, Any]:
 def _crossref(doi: str) -> Dict[str, Any]:
     response = requests.get(
         f"https://api.crossref.org/works/{quote(doi, safe='')}",
-        params={"mailto": os.getenv("MY_EMAIL", "teresa.l@explorationpub.com")},
+        params={"mailto": os.getenv("MY_EMAIL", DEFAULT_CONTACT)},
         headers=HEADERS,
         timeout=20,
     )
