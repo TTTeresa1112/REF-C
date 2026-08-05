@@ -584,6 +584,8 @@ def generate_html_report(json_file_path: str) -> str:
             ai_badge = '<span class="badge orange">🌐 网页</span>'
         elif ai_diag == 'PATENT':
             ai_badge = '<span class="badge green">📑 专利</span>'
+        elif ai_diag == 'INVALID_INPUT':
+            ai_badge = '<span class="badge grey">🚫 无效输入（未调用AI）</span>'
         
         # 匹配信息
         match_info = ''

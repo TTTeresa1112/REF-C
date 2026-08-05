@@ -24,6 +24,12 @@ from generate_json import (
 from generate_html import generate_html_report
 from citation_screening.ui import show_citation_screening
 
+
+# Public reference-check limits. These are enforced again on submit, not only in the UI.
+MAX_PUBLIC_REFERENCES = int(os.getenv("PUBLIC_MAX_REFERENCES", "150"))
+MAX_PUBLIC_TOTAL_CHARS = int(os.getenv("PUBLIC_MAX_TOTAL_CHARS", "60000"))
+MAX_PUBLIC_REFERENCE_CHARS = int(os.getenv("PUBLIC_MAX_REFERENCE_CHARS", "1500"))
+
 # 页面配置
 st.set_page_config(
     page_title="REF-C 参考文献核验",
@@ -363,6 +369,7 @@ def display_results_table(results: list):
         "PATENT": "专利",
         "HIGH_RISK": "高风险",
         "UNKNOWN": "无法判断",
+        "INVALID_INPUT": "无效输入（未调用AI）",
     }
 
     # 构建表格数据
@@ -532,13 +539,17 @@ def main():
 1. Smith, J., & Johnson, A. (2023). Example article title. Journal of Examples, 15(3), 123-145. https://doi.org/10.1234/example.2023
 2. Brown, M. (2022). Another research paper. Science Today, 8(2), 56-78.
 3. Davis, K., et al. (2021). Important findings in research. Nature Reviews, 10(1), 1-20.""",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                max_chars=MAX_PUBLIC_TOTAL_CHARS,
             )
 
             # 实时统计有效条目数（去掉空行）
             current_ref_count = len([line for line in ref_input.strip().split('\n') if line.strip()])
             if current_ref_count > 0:
-                count_placeholder.markdown(f"已识别到 **{current_ref_count}** 条有效参考文献")
+                count_placeholder.markdown(
+                    f"已识别到 **{current_ref_count} / {MAX_PUBLIC_REFERENCES}** 条参考文献"
+                    f"　·　**{len(ref_input):,} / {MAX_PUBLIC_TOTAL_CHARS:,}** 字符"
+                )
             else:
                 count_placeholder.caption("提示：输入后点击页面空白处，即可统计条目数。")
 
@@ -561,6 +572,24 @@ def main():
         if process_btn:
             if not ref_input.strip():
                 st.warning("请先输入参考文献")
+                return
+
+            # Server-side validation: frontend max_chars can be bypassed by direct requests.
+            if len(ref_input) > MAX_PUBLIC_TOTAL_CHARS:
+                st.error(f"单次输入最多 {MAX_PUBLIC_TOTAL_CHARS:,} 个字符，请拆分后核验。")
+                return
+            submitted_refs = [line.strip() for line in ref_input.strip().split('\n') if line.strip()]
+            if len(submitted_refs) > MAX_PUBLIC_REFERENCES:
+                st.error(f"单次最多核验 {MAX_PUBLIC_REFERENCES} 条参考文献，请分批提交。")
+                return
+            oversized = [index for index, ref in enumerate(submitted_refs, 1) if len(ref) > MAX_PUBLIC_REFERENCE_CHARS]
+            if oversized:
+                preview = "、".join(f"Ref.{index}" for index in oversized[:8])
+                suffix = "等" if len(oversized) > 8 else ""
+                st.error(
+                    f"{preview}{suffix} 超过单条 {MAX_PUBLIC_REFERENCE_CHARS} 字符限制。"
+                    "请确认每行只包含一条参考文献，而不是摘要或正文。"
+                )
                 return
 
             # 自动超时保护：任务超过 30 分钟未结束则强制释放名额（防止用户关闭浏览器导致占位）
@@ -594,7 +623,7 @@ def main():
                 system_status["cancel_requested"] = False
 
                 # 按行分割，过滤空行
-                refs = [line.strip() for line in ref_input.strip().split('\n') if line.strip()]
+                refs = submitted_refs
 
                 if len(refs) == 0:
                     st.warning("未识别到有效的参考文献，请检查输入格式")
