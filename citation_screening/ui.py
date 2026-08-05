@@ -12,6 +12,7 @@ from generate_json import process_single_reference_new
 
 from .auth import QuotaStore, QuotaStoreError
 from .fulltext_review import execute_fulltext_review, prepare_fulltext_review
+from .parsers.common import split_reference_lines
 from .pipeline import execute_screening, prepare_screening
 from .reports import build_html_report
 
@@ -294,6 +295,17 @@ def show_citation_screening(system_status) -> None:
         placeholder="Word 稿件请每行粘贴一条参考文献。NLM XML 会优先读取内嵌 <ref-list>，此处可留空。",
         help="Word 必填；NLM XML 可选。参考文献顺序需要与正文编号一致。",
     )
+
+    count_col, count_hint_col = st.columns([1, 4])
+    if count_col.button("点击统计条数", key="count_screen_references"):
+        st.session_state["screen_ref_count"] = len(split_reference_lines(ref_input))
+        st.session_state["screen_ref_count_for"] = ref_input
+    stored_count = st.session_state.get("screen_ref_count")
+    if stored_count is not None and st.session_state.get("screen_ref_count_for") == ref_input:
+        if stored_count:
+            count_hint_col.caption(f"识别到 **{stored_count}** 条参考文献。")
+        else:
+            count_hint_col.caption("未识别到参考文献，请确认每行粘贴一条。")
 
     if st.button("分析稿件并估算调用量", type="primary", use_container_width=True, key="prepare_citation_screening"):
         if uploaded is None:
