@@ -8,6 +8,7 @@ from docx.oxml.ns import qn
 
 from citation_screening.parsers import parse_manuscript
 from citation_screening.fulltext_review import execute_fulltext_review, prepare_fulltext_review
+from citation_screening.author_report import execute_author_report, prepare_author_report
 from citation_screening.pipeline import execute_screening, prepare_screening, run_screening
 from citation_screening.reports import build_html_report
 from citation_screening.services.deepseek import _extract_json
@@ -222,6 +223,38 @@ class FulltextReviewTests(unittest.TestCase):
         self.assertEqual(reviewed["results"][1]["result"], "匹配")
         self.assertIn("全文复核", reviewed["html"])
         self.assertIn("已全文复核", reviewed["html"])
+
+
+class AuthorReportTests(unittest.TestCase):
+    @patch("citation_screening.author_report._generate_batch")
+    def test_only_doubt_and_mismatch_are_reported_with_combined_context(self, generate_batch):
+        data = {"filename": "paper.docx", "results": [
+            {"result": "匹配", "label": "1", "sentence_text": "Supported."},
+            {"result": "存疑", "label": "2", "context_before": "Before.",
+             "sentence_text": "Target [2].", "context_after": "After.",
+             "reason": "摘要证据不足", "title": "Paper two"},
+            {"result": "领域不符", "label": "3", "sentence_text": "Another claim [3].",
+             "reason": "研究对象不同", "title": "Paper three"},
+            {"result": "未获取数据", "label": "4", "sentence_text": "Missing [4]."},
+            {"result": "引用无关内容", "label": "5", "sentence_text": "University [5]."},
+        ]}
+        prepared = prepare_author_report(data)
+        self.assertEqual(len(prepared["items"]), 2)
+        self.assertEqual(prepared["estimated_calls"], 1)
+        self.assertEqual(prepared["items"][0]["relevant_text"], "Before. Target [2]. After.")
+        generate_batch.return_value = {
+            "summary": "Two references require the authors' attention.",
+            "items": [
+                {"item_id": "1", "concern": "Support is unclear.", "suggested_action": "Please verify the reference."},
+                {"item_id": "2", "concern": "The population differs.", "suggested_action": "Please cite a more suitable study."},
+            ],
+        }
+        report = execute_author_report(prepared)
+        self.assertEqual(report["actual_calls"], 1)
+        self.assertIn("Reference Check Report", report["html"])
+        self.assertIn("Reference 2", report["html"])
+        self.assertIn("Before. Target [2]. After.", report["html"])
+        self.assertNotIn("University [5].", report["html"])
 
 
 if __name__ == "__main__":

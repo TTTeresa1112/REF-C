@@ -11,6 +11,7 @@ import streamlit as st
 from generate_json import process_single_reference_new
 
 from .auth import QuotaStore, QuotaStoreError
+from .author_report import execute_author_report, prepare_author_report
 from .fulltext_review import execute_fulltext_review, prepare_fulltext_review
 from .parsers.common import split_reference_lines
 from .pipeline import execute_screening, prepare_screening
@@ -250,9 +251,9 @@ def _show_recent_tasks(store: QuotaStore, user) -> None:
             elif task.get("result_payload"):
                 payload = task["result_payload"]
                 project = os.path.splitext(filename)[0]
-                latest_html = build_html_report(
-                    payload.get("filename") or filename,
-                    payload.get("results", []),
+                latest_html = (
+                    task.get("report_html", "") if payload.get("report_type") == "author_report"
+                    else build_html_report(payload.get("filename") or filename, payload.get("results", []))
                 )
                 html_col, json_col = st.columns(2)
                 html_col.download_button(
@@ -265,7 +266,7 @@ def _show_recent_tasks(store: QuotaStore, user) -> None:
                     file_name=_download_name(project, "json"), mime="application/json",
                     use_container_width=True, key=f"history_json_{task['task_id']}",
                 )
-                if st.button(
+                if payload.get("report_type") != "author_report" and st.button(
                     "在当前页面打开此结果",
                     key=f"history_open_{task['task_id']}",
                     use_container_width=True,
@@ -275,6 +276,89 @@ def _show_recent_tasks(store: QuotaStore, user) -> None:
                     st.session_state.pop("citation_fulltext_prepared", None)
                     st.rerun()
             st.divider()
+
+
+def _show_author_report(store: QuotaStore, user, system_status, data, project_id: str) -> None:
+    reportable = sum(item.get("result") in {"存疑", "领域不符"} for item in data.get("results", []))
+    if not reportable:
+        return
+    st.divider()
+    st.markdown("#### 给作者的英文反馈")
+    st.caption("仅列出“存疑”和“领域不符”；原文上下文保持不变，DeepSeek 只负责生成正式英文原因和修改建议。")
+    prepared = st.session_state.get("citation_author_report_prepared")
+    if prepared is None and st.button(
+        f"生成英文 Reference Check Report（{reportable} 条）",
+        use_container_width=True, key="prepare_author_report",
+    ):
+        try:
+            prepared = prepare_author_report(data)
+            prepared["task_id"] = str(uuid.uuid4())
+            prepared["filename_hash"] = hashlib.sha256(
+                f"{prepared['filename']}:{prepared['task_id']}:author-report".encode("utf-8")
+            ).hexdigest()
+            st.session_state["citation_author_report_prepared"] = prepared
+        except Exception as exc:
+            st.error(str(exc))
+
+    prepared = st.session_state.get("citation_author_report_prepared")
+    if not prepared:
+        return
+    estimated = prepared["estimated_calls"]
+    try:
+        remaining = store.quota_status(user["id"])["remaining"]
+    except QuotaStoreError:
+        remaining = 0
+    st.info(
+        f"将生成 {len(prepared['items'])} 条英文反馈，预计调用 DeepSeek {estimated} 次；"
+        f"今日剩余额度 {remaining} 次。"
+    )
+    if estimated > remaining:
+        st.error("今日额度不足，暂时无法生成英文报告。")
+    elif estimated > MAX_CALLS_PER_TASK:
+        st.error("报告条目过多，超过单次任务调用上限。")
+    elif st.button(
+        f"确认生成英文报告（{estimated} 次调用）", type="primary",
+        use_container_width=True, key=f"execute_author_report_{prepared['task_id']}",
+    ):
+        reservation = store.reserve(
+            user["id"], prepared["task_id"], estimated, prepared["filename_hash"],
+            f"{prepared['filename']}（英文作者报告）",
+        )
+        if not reservation.get("allowed"):
+            st.error(reservation.get("message", "额度不足或任务已经提交。"))
+            return
+        if not system_status["lock"].acquire(blocking=False):
+            store.settle(prepared["task_id"], 0, succeeded=False)
+            st.warning("当前任务较多，额度已退回，请稍后重试。")
+            return
+        try:
+            progress = st.progress(0, text="正在生成英文作者报告……")
+            report = execute_author_report(
+                prepared, lambda pct, msg: progress.progress(pct, text=msg)
+            )
+            report["report_type"] = "author_report"
+            st.session_state.pop("citation_author_report_prepared", None)
+            try:
+                store.complete_task(prepared["task_id"], report["actual_calls"], report)
+                st.success("英文作者报告已生成。可以直接下载并发送给作者。")
+            except QuotaStoreError:
+                st.warning("英文报告已经生成，但云端保存暂时失败；请立即下载，并联系管理员核对额度。")
+            st.download_button(
+                "下载英文 Reference Check Report",
+                data=report["html"].encode("utf-8"),
+                file_name=_download_name(f"{project_id or 'manuscript'}_reference_check_report", "html"),
+                mime="text/html", use_container_width=True,
+                key=f"download_author_report_{prepared['task_id']}",
+            )
+        except Exception as exc:
+            try:
+                store.fail_task(prepared["task_id"], 0, str(exc))
+            except QuotaStoreError:
+                pass
+            st.session_state.pop("citation_author_report_prepared", None)
+            st.error(f"英文报告生成失败：{exc}")
+        finally:
+            system_status["lock"].release()
 
 
 def show_citation_screening(system_status) -> None:
@@ -302,6 +386,7 @@ def show_citation_screening(system_status) -> None:
         st.session_state.pop("screening_user", None)
         st.session_state.pop("citation_screening_prepared", None)
         st.session_state.pop("citation_fulltext_prepared", None)
+        st.session_state.pop("citation_author_report_prepared", None)
         st.rerun()
 
     _show_recent_tasks(store, user)
@@ -414,3 +499,4 @@ def show_citation_screening(system_status) -> None:
         )
         with result_area.container():
             _show_results(data, active_project)
+        _show_author_report(store, user, system_status, data, active_project)
