@@ -102,6 +102,43 @@ def _show_results(data, project_id: str) -> None:
     col_json.download_button("下载 JSON 数据", data=json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8"), file_name=_download_name(project_id, "json"), mime="application/json", use_container_width=True)
 
 
+def _show_recent_tasks(store: QuotaStore, user) -> None:
+    with st.expander("最近任务（刷新页面后可在这里找回结果）", expanded=True):
+        st.button("刷新任务状态", key="refresh_screening_tasks")
+        try:
+            tasks = store.recent_tasks(user["id"])
+        except QuotaStoreError as exc:
+            st.warning(str(exc))
+            return
+        if not tasks:
+            st.caption("最近 24 小时没有任务。")
+            return
+        labels = {"running": "处理中", "completed": "已完成", "failed": "失败"}
+        for task in tasks:
+            filename = task.get("display_filename") or "未命名稿件"
+            status = task.get("status", "running")
+            st.markdown(f"**{filename}** · {labels.get(status, status)} · 预计 {task.get('estimated_calls', 0)} 次")
+            if status == "running":
+                st.caption("后台仍在处理。稍后点击“刷新任务状态”即可查看结果。")
+            elif status == "failed":
+                st.error(task.get("error_message") or "任务失败。")
+            elif task.get("result_payload"):
+                payload = task["result_payload"]
+                project = os.path.splitext(filename)[0]
+                html_col, json_col = st.columns(2)
+                html_col.download_button(
+                    "下载 HTML 报告", data=(task.get("report_html") or "").encode("utf-8"),
+                    file_name=_download_name(project, "html"), mime="text/html",
+                    use_container_width=True, key=f"history_html_{task['task_id']}",
+                )
+                json_col.download_button(
+                    "下载 JSON 数据", data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                    file_name=_download_name(project, "json"), mime="application/json",
+                    use_container_width=True, key=f"history_json_{task['task_id']}",
+                )
+            st.divider()
+
+
 def show_citation_screening(system_status) -> None:
     st.subheader("引用内容初筛")
     st.caption("上传 Word 或 NLM XML，根据题名和摘要，用 DeepSeek 给出匹配、存疑或领域不符三类初筛结果。")
@@ -127,6 +164,8 @@ def show_citation_screening(system_status) -> None:
         st.session_state.pop("screening_user", None)
         st.session_state.pop("citation_screening_prepared", None)
         st.rerun()
+
+    _show_recent_tasks(store, user)
 
     project_id = st.text_input("项目名称（选填）", key="screen_project_id", placeholder="例如：MyPaper-2026-001")
     uploaded = st.file_uploader("上传稿件", type=["docx", "xml"], key="screen_manuscript")
@@ -182,7 +221,10 @@ def show_citation_screening(system_status) -> None:
         else:
             st.warning(f"确认后将预扣 {estimated} 次额度，预计剩余 {quota['remaining'] - estimated} 次。")
             if st.button(f"确认消耗 {estimated} 次并开始初筛", type="primary", use_container_width=True, key=f"execute_{prepared['task_id']}"):
-                reservation = store.reserve(user["id"], prepared["task_id"], estimated, prepared["filename_hash"])
+                reservation = store.reserve(
+                    user["id"], prepared["task_id"], estimated,
+                    prepared["filename_hash"], prepared["filename"],
+                )
                 if not reservation.get("allowed"):
                     st.error(reservation.get("message", "额度不足或任务已经提交。"))
                 elif not system_status["lock"].acquire(blocking=False):
@@ -196,14 +238,14 @@ def show_citation_screening(system_status) -> None:
                         st.session_state["citation_screening_result"] = data
                         st.session_state.pop("citation_screening_prepared", None)
                         try:
-                            store.settle(prepared["task_id"], data["actual_calls"], succeeded=True)
-                            st.success("初筛完成，额度已按实际请求次数结算。")
+                            store.complete_task(prepared["task_id"], data["actual_calls"], data)
+                            st.success("初筛完成，结果已保存 24 小时，额度已按实际请求次数结算。")
                         except QuotaStoreError:
-                            st.warning("初筛已完成并保留结果，但额度结算暂时失败；系统保留预扣额度以避免重复计费风险，请联系管理员核对。")
+                            st.warning("初筛已完成并保留在当前页面，但云端结果保存暂时失败；请立即下载，并联系管理员核对额度。")
                     except Exception as exc:
                         refunded = True
                         try:
-                            store.settle(prepared["task_id"], 0, succeeded=False)
+                            store.fail_task(prepared["task_id"], 0, str(exc))
                         except QuotaStoreError:
                             refunded = False
                         st.session_state.pop("citation_screening_prepared", None)

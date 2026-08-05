@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 import requests
@@ -60,7 +61,7 @@ class QuotaStore:
         row = data[0] if isinstance(data, list) else data
         return {key: int(row.get(key, 0)) for key in ("daily_limit", "used", "remaining")}
 
-    def reserve(self, user_id: str, task_id: str, requested_calls: int, filename_hash: str) -> Dict[str, Any]:
+    def reserve(self, user_id: str, task_id: str, requested_calls: int, filename_hash: str, filename: str = "") -> Dict[str, Any]:
         response = requests.post(
             f"{self.base_url}/rest/v1/rpc/reserve_screening_quota",
             headers=self.headers,
@@ -76,6 +77,14 @@ class QuotaStore:
             raise QuotaStoreError("额度预扣失败，请稍后重试。")
         data = response.json()
         row = data[0] if isinstance(data, list) else data
+        if row.get("allowed") and filename:
+            requests.patch(
+                f"{self.base_url}/rest/v1/screening_tasks",
+                headers={**self.headers, "Prefer": "return=minimal"},
+                params={"task_id": f"eq.{task_id}", "user_id": f"eq.{user_id}"},
+                json={"display_filename": filename[:255]},
+                timeout=15,
+            ).raise_for_status()
         return row
 
     def settle(self, task_id: str, actual_calls: int, succeeded: bool = True) -> None:
@@ -91,3 +100,58 @@ class QuotaStore:
         )
         if not response.ok:
             raise QuotaStoreError("额度结算失败，请联系管理员。")
+
+    def complete_task(self, task_id: str, actual_calls: int, result: Dict[str, Any]) -> None:
+        payload = {key: value for key, value in result.items() if key != "html"}
+        response = requests.post(
+            f"{self.base_url}/rest/v1/rpc/complete_screening_task",
+            headers=self.headers,
+            json={
+                "p_task_id": task_id,
+                "p_actual_calls": int(actual_calls),
+                "p_result_payload": payload,
+                "p_report_html": result.get("html", ""),
+            },
+            timeout=30,
+        )
+        if not response.ok:
+            raise QuotaStoreError("结果持久化与额度结算失败，请联系管理员。")
+
+    def fail_task(self, task_id: str, actual_calls: int, message: str) -> None:
+        response = requests.post(
+            f"{self.base_url}/rest/v1/rpc/fail_screening_task",
+            headers=self.headers,
+            json={
+                "p_task_id": task_id,
+                "p_actual_calls": int(actual_calls),
+                "p_error_message": str(message)[:500],
+            },
+            timeout=15,
+        )
+        if not response.ok:
+            raise QuotaStoreError("失败任务结算失败，请联系管理员。")
+
+    def recent_tasks(self, user_id: str, limit: int = 10):
+        try:
+            requests.post(
+                f"{self.base_url}/rest/v1/rpc/purge_expired_screening_tasks",
+                headers=self.headers, json={}, timeout=10,
+            )
+        except requests.RequestException:
+            pass
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        response = requests.get(
+            f"{self.base_url}/rest/v1/screening_tasks",
+            headers=self.headers,
+            params={
+                "select": "task_id,display_filename,estimated_calls,actual_calls,status,created_at,completed_at,expires_at,result_payload,report_html,error_message",
+                "user_id": f"eq.{user_id}",
+                "created_at": f"gte.{since}",
+                "order": "created_at.desc",
+                "limit": str(max(1, min(limit, 20))),
+            },
+            timeout=20,
+        )
+        if not response.ok:
+            raise QuotaStoreError("无法读取最近任务。")
+        return response.json()
