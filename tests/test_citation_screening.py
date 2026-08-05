@@ -109,6 +109,19 @@ class ParserTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    @patch("citation_screening.pipeline.fetch_metadata")
+    def test_missing_abstract_is_separate_from_doubt(self, fetch_metadata):
+        fetch_metadata.return_value = {
+            "title": "Article title", "abstract": "", "authors": [],
+            "metadata_source": "Crossref", "metadata_error": "",
+        }
+        xml = b'''<article><body><p>Claim <xref ref-type="bibr" rid="B1">[1]</xref>.</p></body><back><ref-list><ref id="B1"><label>1</label><article-title>Article title</article-title></ref></ref-list></back></article>'''
+        data = run_screening(xml, "paper.xml")
+        self.assertEqual(data["statistics"]["未获取数据"], 1)
+        self.assertEqual(data["statistics"]["存疑"], 0)
+        self.assertEqual(data["results"][0]["result"], "未获取数据")
+        self.assertIn('<option value="未获取数据">', data["html"])
+
     @patch("citation_screening.pipeline.screen_pair")
     @patch("citation_screening.pipeline.fetch_metadata")
     def test_pipeline_and_html_without_external_calls(self, fetch_metadata, screen_pair):
@@ -195,6 +208,7 @@ class FulltextReviewTests(unittest.TestCase):
         self.assertIn("Drug A significantly", reviewed["results"][0]["evidence_text"])
         self.assertEqual(reviewed["results"][1]["result"], "匹配")
         self.assertIn("全文复核", reviewed["html"])
+        self.assertIn("已全文复核", reviewed["html"])
 
 
 if __name__ == "__main__":

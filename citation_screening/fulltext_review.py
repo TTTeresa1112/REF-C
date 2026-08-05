@@ -133,7 +133,10 @@ def execute_fulltext_review(
             completed += 1
             _report(progress_callback, int(98 * completed / max(1, len(review_items))), f"正在全文复核（{completed}/{len(review_items)}）…")
 
-    counts = {label: sum(1 for item in results if item.get("result") == label) for label in ("匹配", "存疑", "领域不符")}
+    counts = {
+        label: sum(1 for item in results if item.get("result") == label)
+        for label in ("匹配", "存疑", "领域不符", "未获取数据")
+    }
     _report(progress_callback, 100, "全文复核完成。")
     return {
         "filename": prepared["filename"],

@@ -82,10 +82,11 @@ def _login_panel() -> bool:
 def _show_results(data, project_id: str) -> None:
     stats = data["statistics"]
     st.divider()
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("匹配", stats.get("匹配", 0))
     col2.metric("存疑", stats.get("存疑", 0))
     col3.metric("领域不符", stats.get("领域不符", 0))
+    col4.metric("未获取数据", stats.get("未获取数据", 0))
     st.caption(f"预计调用 {data.get('estimated_calls', 0)} 次；实际发出 {data.get('actual_calls', 0)} 次 DeepSeek 请求。")
 
     rows = [{
@@ -95,6 +96,7 @@ def _show_results(data, project_id: str) -> None:
         "Ref.": item["label"],
         "文献题名": item["title"],
         "结果": item["result"],
+        "全文复核": "已复核" if item.get("fulltext_paragraphs_checked") is not None else "",
         "简要理由": item["reason"],
     } for item in data["results"]]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -258,7 +260,7 @@ def _show_recent_tasks(store: QuotaStore, user) -> None:
 
 def show_citation_screening(system_status) -> None:
     st.subheader("引用内容初筛")
-    st.caption("上传 Word 或 NLM XML，根据题名和摘要，用 DeepSeek 给出匹配、存疑或领域不符三类初筛结果。")
+    st.caption("上传 Word 或 NLM XML，根据题名和摘要，用 DeepSeek 给出匹配、存疑或领域不符；没有取得摘要的项目单列为未获取数据。")
     st.info("目标引用句会连同前后句和所在段落一起发送，用于减少脱离语境造成的误判。", icon="ℹ️")
     try:
         store = _quota_store()
@@ -329,7 +331,7 @@ def show_citation_screening(system_status) -> None:
         cols = st.columns(4)
         cols[0].metric("引用位置", prepared["citation_locations"])
         cols[1].metric("判断组合", prepared["total_pairs"])
-        cols[2].metric("无需 AI，直接存疑", prepared["direct_doubt"])
+        cols[2].metric("未获取摘要", prepared["direct_doubt"])
         cols[3].metric("预计 DeepSeek 调用", prepared["estimated_calls"])
         estimated = prepared["estimated_calls"]
         if estimated > MAX_CALLS_PER_TASK:

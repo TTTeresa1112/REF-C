@@ -120,7 +120,7 @@ def execute_screening(
     ai_pairs = [pair for pair in pairs if pair["requires_ai"]]
     for pair in pairs:
         if not pair["requires_ai"]:
-            results.append({**pair, "result": "存疑", "reason": "未获取到文献摘要，无法可靠判断支持程度。"})
+            results.append({**pair, "result": "未获取数据", "reason": "未获取到文献摘要，暂时无法进行内容判断。"})
 
     actual_calls = 0
     with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(ai_pairs) or 1))) as executor:
@@ -140,7 +140,10 @@ def execute_screening(
             _report(progress_callback, int(98 * completed / max(1, len(ai_pairs))), f"DeepSeek 正在初筛（{completed}/{len(ai_pairs)}）…")
 
     results.sort(key=lambda x: (x["sentence_order"], int(x["label"]) if str(x["label"]).isdigit() else 999999))
-    counts = {label: sum(1 for item in results if item["result"] == label) for label in ("匹配", "存疑", "领域不符")}
+    counts = {
+        label: sum(1 for item in results if item["result"] == label)
+        for label in ("匹配", "存疑", "领域不符", "未获取数据")
+    }
     _report(progress_callback, 100, "引用内容初筛完成。")
     return {
         "filename": prepared["filename"],

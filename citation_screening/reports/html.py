@@ -4,7 +4,7 @@ from html import escape
 from typing import Any, Dict, List
 
 
-STATUS_CLASS = {"匹配": "match", "存疑": "doubt", "领域不符": "mismatch"}
+STATUS_CLASS = {"匹配": "match", "存疑": "doubt", "领域不符": "mismatch", "未获取数据": "nodata"}
 
 
 def build_html_report(filename: str, results: List[Dict[str, Any]]) -> str:
@@ -35,6 +35,7 @@ def build_html_report(filename: str, results: List[Dict[str, Any]]) -> str:
         if identifiers:
             detail_parts.append(f'<div><b>文献标识：</b>{" · ".join(identifiers)}</div>')
         review_status = item.get("fulltext_review_status", "")
+        reviewed = item.get("fulltext_paragraphs_checked") is not None
         evidence = item.get("evidence_text", "")
         fulltext_url = item.get("fulltext_source_url", "")
         if review_status:
@@ -62,7 +63,7 @@ def build_html_report(filename: str, results: List[Dict[str, Any]]) -> str:
         rows.append(f"""
         <tr data-status="{escape(result, quote=True)}" data-source="{escape(source, quote=True)}">
           <td class="number">{index}</td>
-          <td class="status-cell"><span class="status {status_class}">{escape(result)}</span></td>
+          <td class="status-cell"><span class="status {status_class}">{escape(result)}</span>{'<span class="review-badge">已全文复核</span>' if reviewed else ''}</td>
           <td class="ref">{escape(str(item.get('label', '')))}</td>
           <td class="claim"><div class="target">{escape(item.get('sentence_text', ''))}</div>{details}</td>
           <td class="paper"><div class="title">{escape(item.get('title') or '未获取到题名')}</div><div class="source">{escape(source)}</div></td>
@@ -72,7 +73,7 @@ def build_html_report(filename: str, results: List[Dict[str, Any]]) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>REF-C 引用内容初筛报告</title><style>
-:root{{--line:#dfe3e8;--muted:#667085;--head:#f5f7f9;--green:#067647;--green-bg:#ecfdf3;--amber:#b54708;--amber-bg:#fffaeb;--red:#b42318;--red-bg:#fef3f2}}
+:root{{--line:#dfe3e8;--muted:#667085;--head:#f5f7f9;--green:#067647;--green-bg:#ecfdf3;--amber:#b54708;--amber-bg:#fffaeb;--red:#b42318;--red-bg:#fef3f2;--gray:#475467;--gray-bg:#f2f4f7}}
 *{{box-sizing:border-box}} body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:#20262e;background:#fff;margin:0;font-size:14px}}
 main{{width:min(1500px,calc(100% - 32px));margin:26px auto 50px}} h1{{font-size:24px;margin:0 0 5px}} .meta-line{{color:var(--muted);font-size:13px}}
 .summary{{display:flex;align-items:center;gap:18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:11px 0;margin:18px 0}}
@@ -82,8 +83,8 @@ input,select,button{{height:38px;border:1px solid #cfd5dc;border-radius:6px;back
 .table-wrap{{border:1px solid var(--line);border-radius:7px;overflow:auto;max-height:72vh}} table{{width:100%;border-collapse:separate;border-spacing:0;min-width:1100px;table-layout:fixed}}
 th{{position:sticky;top:0;z-index:2;background:var(--head);font-size:12px;text-align:left;color:#4b5563;border-bottom:1px solid var(--line);padding:10px 9px}}
 td{{vertical-align:top;border-bottom:1px solid #e8ebee;padding:11px 9px;line-height:1.52;background:#fff;overflow-wrap:anywhere}} tbody tr:last-child td{{border-bottom:0}} tbody tr:hover td{{background:#fafbfd}} tr[hidden]{{display:none}}
-.number{{width:46px;text-align:center;color:#98a2b3}} .status-cell{{width:90px}} .ref{{width:58px;text-align:center;font-weight:650}} .claim{{width:34%}} .paper{{width:25%}} .reason{{width:25%}}
-.status{{display:inline-block;font-size:12px;font-weight:650;padding:3px 8px;border-radius:4px;white-space:nowrap}} .status.match{{color:var(--green);background:var(--green-bg)}} .status.doubt{{color:var(--amber);background:var(--amber-bg)}} .status.mismatch{{color:var(--red);background:var(--red-bg)}}
+.number{{width:46px;text-align:center;color:#98a2b3}} .status-cell{{width:112px}} .ref{{width:58px;text-align:center;font-weight:650}} .claim{{width:34%}} .paper{{width:25%}} .reason{{width:25%}}
+.status{{display:inline-block;font-size:12px;font-weight:650;padding:3px 8px;border-radius:4px;white-space:nowrap}} .status.match{{color:var(--green);background:var(--green-bg)}} .status.doubt{{color:var(--amber);background:var(--amber-bg)}} .status.mismatch{{color:var(--red);background:var(--red-bg)}} .status.nodata{{color:var(--gray);background:var(--gray-bg)}} .review-badge{{display:block;width:max-content;margin-top:5px;padding:2px 6px;border:1px solid #84adff;border-radius:4px;color:#175cd3;background:#eff4ff;font-size:11px;white-space:nowrap}}
 .target{{font-weight:550}} .title{{font-weight:550}} .source{{color:var(--muted);font-size:12px;margin-top:5px}} details{{margin-top:7px;color:var(--muted);font-size:12px}} summary{{cursor:pointer;user-select:none}} .details-body{{border-left:2px solid #d9dee5;margin-top:7px;padding-left:9px}} .details-body div+div{{margin-top:5px}} a{{color:#175cd3;text-decoration:none}} a:hover{{text-decoration:underline}}
 .evidence{{color:#344054;background:#f8fafc;border:1px solid #e4e7ec;border-radius:5px;padding:8px;line-height:1.6}}
 .empty{{padding:34px;text-align:center;color:var(--muted)}} .notice{{color:var(--muted);font-size:12px;margin-top:16px;line-height:1.6}}
@@ -97,16 +98,17 @@ td{{vertical-align:top;border-bottom:1px solid #e8ebee;padding:11px 9px;line-hei
   <span class="summary-item match"><b>{counts['匹配']}</b> 匹配</span>
   <span class="summary-item doubt"><b>{counts['存疑']}</b> 存疑</span>
   <span class="summary-item mismatch"><b>{counts['领域不符']}</b> 领域不符</span>
+  <span class="summary-item"><b>{counts['未获取数据']}</b> 未获取数据</span>
 </div>
 <div class="toolbar">
   <input id="keyword" type="search" placeholder="搜索正文句子、题名、理由或 Ref.…" autocomplete="off">
-  <select id="statusFilter"><option value="">全部结果</option><option value="匹配">匹配</option><option value="存疑">存疑</option><option value="领域不符">领域不符</option></select>
+  <select id="statusFilter"><option value="">全部结果</option><option value="匹配">匹配</option><option value="存疑">存疑</option><option value="领域不符">领域不符</option><option value="未获取数据">未获取数据</option></select>
   <select id="sourceFilter"><option value="">全部数据来源</option>{source_options}</select>
   <button id="reset" type="button">清除筛选</button>
   <div class="visible-count" id="visibleCount"></div>
 </div>
 <div class="table-wrap"><table>
-  <colgroup><col style="width:46px"><col style="width:90px"><col style="width:58px"><col style="width:34%"><col style="width:25%"><col style="width:25%"></colgroup>
+  <colgroup><col style="width:46px"><col style="width:112px"><col style="width:58px"><col style="width:34%"><col style="width:25%"><col style="width:25%"></colgroup>
   <thead><tr><th>#</th><th>结果</th><th>Ref.</th><th>目标引用句</th><th>文献题名 / 来源</th><th>简要理由</th></tr></thead>
   <tbody id="resultRows">{''.join(rows) if rows else '<tr><td colspan="6" class="empty">没有可显示的筛查结果。</td></tr>'}</tbody>
 </table></div>
