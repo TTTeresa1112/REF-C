@@ -34,8 +34,29 @@ def build_html_report(filename: str, results: List[Dict[str, Any]]) -> str:
             detail_parts.append(f'<div><b>后文：</b>{escape(after)}</div>')
         if identifiers:
             detail_parts.append(f'<div><b>文献标识：</b>{" · ".join(identifiers)}</div>')
+        review_status = item.get("fulltext_review_status", "")
+        evidence = item.get("evidence_text", "")
+        fulltext_url = item.get("fulltext_source_url", "")
+        if review_status:
+            detail_parts.append(f'<div><b>全文复核：</b>{escape(review_status)}</div>')
+        if item.get("fulltext_source"):
+            source_text = escape(str(item["fulltext_source"]))
+            if fulltext_url:
+                source_text = f'<a href="{escape(fulltext_url, quote=True)}">{source_text}</a>'
+            detail_parts.append(f'<div><b>全文来源：</b>{source_text}</div>')
+        if evidence:
+            location = escape(str(item.get("evidence_section") or "正文"))
+            if item.get("evidence_page"):
+                location += f' · 第 {escape(str(item["evidence_page"]))} 页'
+            detail_parts.append(
+                f'<div class="evidence"><b>支持证据（{location}）：</b>{escape(evidence)}</div>'
+            )
+        if item.get("fulltext_paragraphs_checked") is not None:
+            detail_parts.append(
+                f'<div><b>已核查段落：</b>{escape(str(item["fulltext_paragraphs_checked"]))}</div>'
+            )
         details = (
-            f'<details><summary>查看上下文与标识符</summary><div class="details-body">{"".join(detail_parts)}</div></details>'
+            f'<details><summary>查看上下文、标识与全文证据</summary><div class="details-body">{"".join(detail_parts)}</div></details>'
             if detail_parts else ""
         )
         rows.append(f"""
@@ -64,6 +85,7 @@ td{{vertical-align:top;border-bottom:1px solid #e8ebee;padding:11px 9px;line-hei
 .number{{width:46px;text-align:center;color:#98a2b3}} .status-cell{{width:90px}} .ref{{width:58px;text-align:center;font-weight:650}} .claim{{width:34%}} .paper{{width:25%}} .reason{{width:25%}}
 .status{{display:inline-block;font-size:12px;font-weight:650;padding:3px 8px;border-radius:4px;white-space:nowrap}} .status.match{{color:var(--green);background:var(--green-bg)}} .status.doubt{{color:var(--amber);background:var(--amber-bg)}} .status.mismatch{{color:var(--red);background:var(--red-bg)}}
 .target{{font-weight:550}} .title{{font-weight:550}} .source{{color:var(--muted);font-size:12px;margin-top:5px}} details{{margin-top:7px;color:var(--muted);font-size:12px}} summary{{cursor:pointer;user-select:none}} .details-body{{border-left:2px solid #d9dee5;margin-top:7px;padding-left:9px}} .details-body div+div{{margin-top:5px}} a{{color:#175cd3;text-decoration:none}} a:hover{{text-decoration:underline}}
+.evidence{{color:#344054;background:#f8fafc;border:1px solid #e4e7ec;border-radius:5px;padding:8px;line-height:1.6}}
 .empty{{padding:34px;text-align:center;color:var(--muted)}} .notice{{color:var(--muted);font-size:12px;margin-top:16px;line-height:1.6}}
 @media(max-width:800px){{main{{width:calc(100% - 18px);margin-top:16px}} .toolbar{{grid-template-columns:1fr 1fr}} .toolbar input{{grid-column:1/-1}} .visible-count{{text-align:left}} .summary{{gap:10px;flex-wrap:wrap}}}}
 @media print{{main{{width:100%;margin:0}} .toolbar{{display:none}} .table-wrap{{max-height:none;overflow:visible;border:0}} table{{min-width:0}} th{{position:static}} tr[hidden]{{display:none}} .notice{{margin-top:10px}}}}
@@ -88,7 +110,7 @@ td{{vertical-align:top;border-bottom:1px solid #e8ebee;padding:11px 9px;line-hei
   <thead><tr><th>#</th><th>结果</th><th>Ref.</th><th>目标引用句</th><th>文献题名 / 来源</th><th>简要理由</th></tr></thead>
   <tbody id="resultRows">{''.join(rows) if rows else '<tr><td colspan="6" class="empty">没有可显示的筛查结果。</td></tr>'}</tbody>
 </table></div>
-<div class="notice"><b>使用限制：</b>本报告仅根据公开数据库中的题名和摘要进行自动初筛，不等同于全文证据核查，也不应替代人工学术编辑判断。</div>
+<div class="notice"><b>使用限制：</b>初筛依据公开数据库题名和摘要；标有“全文复核”的项目还核查了合法开放全文中的高相关段落。自动结果仍不应替代人工学术编辑判断。</div>
 </main><script>
 const rows=[...document.querySelectorAll('#resultRows tr[data-status]')];
 const keyword=document.getElementById('keyword');

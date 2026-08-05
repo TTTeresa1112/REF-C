@@ -8,7 +8,8 @@ from urllib.parse import quote
 import requests
 
 
-HEADERS = {"User-Agent": "REF-C/1.0 (mailto:teresa.l@explorationpub.com)"}
+DEFAULT_CONTACT = os.getenv("MY_EMAIL", "you@example.com")
+HEADERS = {"User-Agent": f"REF-C/1.0 (mailto:{DEFAULT_CONTACT})"}
 
 
 def _empty(ref: Dict[str, Any]) -> Dict[str, Any]:
@@ -16,6 +17,8 @@ def _empty(ref: Dict[str, Any]) -> Dict[str, Any]:
         "title": ref.get("title", ""),
         "abstract": "",
         "authors": [],
+        "doi": ref.get("doi", ""),
+        "pmcid": ref.get("pmcid", ""),
         "metadata_source": "",
         "metadata_error": "",
     }
@@ -41,10 +44,16 @@ def _pubmed(pmid: str) -> Dict[str, Any]:
         given = author.findtext("ForeName", "") or author.findtext("Initials", "")
         if family:
             authors.append(f"{family} {given}".strip())
+    article_ids = {
+        (node.get("IdType") or "").lower(): (node.text or "").strip()
+        for node in root.findall(".//ArticleId")
+    }
     return {
         "title": "".join(title_node.itertext()).strip() if title_node is not None else "",
         "abstract": " ".join("".join(n.itertext()).strip() for n in abstract_nodes),
         "authors": authors,
+        "doi": article_ids.get("doi", ""),
+        "pmcid": article_ids.get("pmc", ""),
         "metadata_source": "PubMed",
         "metadata_error": "",
     }

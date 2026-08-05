@@ -11,6 +11,7 @@ import streamlit as st
 from generate_json import process_single_reference_new
 
 from .auth import QuotaStore, QuotaStoreError
+from .fulltext_review import execute_fulltext_review, prepare_fulltext_review
 from .pipeline import execute_screening, prepare_screening
 from .reports import build_html_report
 
@@ -103,6 +104,108 @@ def _show_results(data, project_id: str) -> None:
     col_json.download_button("下载 JSON 数据", data=json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8"), file_name=_download_name(project_id, "json"), mime="application/json", use_container_width=True)
 
 
+def _show_fulltext_review(store: QuotaStore, user, system_status, data, project_id: str, quota) -> None:
+    """Offer a separately metered, open-full-text pass for doubtful rows only."""
+    doubtful = sum(1 for item in data.get("results", []) if item.get("result") == "存疑")
+    if not doubtful:
+        return
+    st.divider()
+    st.markdown("#### 存疑项开放全文复核")
+    st.caption(
+        "只查找合法开放获取的 PMC/Europe PMC XML 或开放 PDF；PDF 会在本地提取文本。"
+        "系统先选出最多 8 个高相关段落，再逐段交给 DeepSeek，找到明确支持证据后立即停止。"
+    )
+    prepared = st.session_state.get("citation_fulltext_prepared")
+    if prepared is None and st.button(
+        f"查找 {doubtful} 个存疑项的开放全文并估算调用量",
+        use_container_width=True,
+        key="prepare_fulltext_review",
+    ):
+        if not system_status["lock"].acquire(blocking=False):
+            st.warning("当前处理任务较多，请稍后重试。")
+        else:
+            progress = st.progress(0, text="正在查找开放全文……")
+            try:
+                prepared = prepare_fulltext_review(
+                    data,
+                    progress_callback=lambda pct, msg: progress.progress(pct, text=msg),
+                    max_paragraphs=8,
+                    max_workers=3,
+                )
+                prepared["task_id"] = str(uuid.uuid4())
+                prepared["filename_hash"] = hashlib.sha256(
+                    f"{prepared['filename']}:{prepared['task_id']}:fulltext".encode("utf-8")
+                ).hexdigest()
+                prepared["project_id"] = project_id
+                st.session_state["citation_fulltext_prepared"] = prepared
+                st.success("全文候选段落已准备好；此步骤没有调用 DeepSeek，也没有扣除额度。")
+            except Exception as exc:
+                st.error(f"开放全文准备失败：{exc}")
+            finally:
+                system_status["lock"].release()
+
+    prepared = st.session_state.get("citation_fulltext_prepared")
+    if not prepared:
+        return
+    cols = st.columns(4)
+    cols[0].metric("存疑项", prepared["doubtful_count"])
+    cols[1].metric("找到开放全文", prepared["fulltexts_found"])
+    cols[2].metric("无法取得/提取", prepared["unavailable_count"])
+    cols[3].metric("最多调用", prepared["estimated_calls"])
+    estimated = prepared["estimated_calls"]
+    st.caption("这是上限；每个引用一旦找到支持证据就停止，实际调用量通常更少，并按实际次数结算。")
+    if estimated == 0:
+        st.info("没有找到可用于复核的开放全文，因此不会调用 DeepSeek。原结果保持不变。")
+        if st.button("关闭本次全文复核", key="discard_empty_fulltext"):
+            st.session_state.pop("citation_fulltext_prepared", None)
+            st.rerun()
+    elif estimated > MAX_CALLS_PER_TASK:
+        st.error(f"最多需要 {estimated} 次调用，超过单次任务上限 {MAX_CALLS_PER_TASK} 次。")
+    elif estimated > quota["remaining"]:
+        st.error(f"最多需要 {estimated} 次调用，但今日只剩 {quota['remaining']} 次额度。")
+    elif st.button(
+        f"确认预扣最多 {estimated} 次并开始全文复核",
+        type="primary",
+        use_container_width=True,
+        key=f"execute_fulltext_{prepared['task_id']}",
+    ):
+        reservation = store.reserve(
+            user["id"], prepared["task_id"], estimated,
+            prepared["filename_hash"], f"{prepared['filename']}（全文复核）",
+        )
+        if not reservation.get("allowed"):
+            st.error(reservation.get("message", "额度不足或任务已经提交。"))
+        elif not system_status["lock"].acquire(blocking=False):
+            store.settle(prepared["task_id"], 0, succeeded=False)
+            st.warning("当前任务较多，预扣额度已退回，请稍后重新准备。")
+            st.session_state.pop("citation_fulltext_prepared", None)
+        else:
+            progress = st.progress(0, text="开始逐段复核……")
+            try:
+                reviewed = execute_fulltext_review(
+                    prepared,
+                    progress_callback=lambda pct, msg: progress.progress(pct, text=msg),
+                    max_workers=3,
+                )
+                st.session_state["citation_screening_result"] = reviewed
+                st.session_state.pop("citation_fulltext_prepared", None)
+                try:
+                    store.complete_task(prepared["task_id"], reviewed["actual_calls"], reviewed)
+                    st.success("全文复核完成，结果已保存 24 小时，额度已按实际调用次数结算。")
+                except QuotaStoreError:
+                    st.warning("全文复核已完成并保留在当前页面，但云端保存暂时失败；请立即下载结果并联系管理员核对额度。")
+                st.rerun()
+            except Exception as exc:
+                try:
+                    store.fail_task(prepared["task_id"], 0, str(exc))
+                except QuotaStoreError:
+                    pass
+                st.session_state.pop("citation_fulltext_prepared", None)
+                st.error(f"全文复核失败：{exc}")
+            finally:
+                system_status["lock"].release()
+
+
 def _show_recent_tasks(store: QuotaStore, user) -> None:
     with st.expander("最近任务（刷新页面后可在这里找回结果）", expanded=True):
         st.button("刷新任务状态", key="refresh_screening_tasks")
@@ -141,6 +244,15 @@ def _show_recent_tasks(store: QuotaStore, user) -> None:
                     file_name=_download_name(project, "json"), mime="application/json",
                     use_container_width=True, key=f"history_json_{task['task_id']}",
                 )
+                if st.button(
+                    "在当前页面打开此结果",
+                    key=f"history_open_{task['task_id']}",
+                    use_container_width=True,
+                ):
+                    payload["html"] = latest_html
+                    st.session_state["citation_screening_result"] = payload
+                    st.session_state.pop("citation_fulltext_prepared", None)
+                    st.rerun()
             st.divider()
 
 
@@ -168,6 +280,7 @@ def show_citation_screening(system_status) -> None:
     if logout_col.button("退出", key="screening_logout", use_container_width=True):
         st.session_state.pop("screening_user", None)
         st.session_state.pop("citation_screening_prepared", None)
+        st.session_state.pop("citation_fulltext_prepared", None)
         st.rerun()
 
     _show_recent_tasks(store, user)
@@ -262,3 +375,7 @@ def show_citation_screening(system_status) -> None:
     data = st.session_state.get("citation_screening_result")
     if data:
         _show_results(data, project_id or st.session_state.get("screen_project_id", ""))
+        _show_fulltext_review(
+            store, user, system_status, data,
+            project_id or st.session_state.get("screen_project_id", ""), quota,
+        )

@@ -7,6 +7,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from citation_screening.parsers import parse_manuscript
+from citation_screening.fulltext_review import execute_fulltext_review, prepare_fulltext_review
 from citation_screening.pipeline import execute_screening, prepare_screening, run_screening
 
 
@@ -143,6 +144,57 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result["actual_calls"], 1)
         self.assertEqual(screen_pair.call_args.args[2], "Before.")
         self.assertEqual(screen_pair.call_args.args[3], "After.")
+
+
+class FulltextReviewTests(unittest.TestCase):
+    @patch("citation_screening.fulltext_review.check_fulltext_paragraph")
+    @patch("citation_screening.fulltext_review.fetch_open_fulltext")
+    def test_doubtful_only_and_stop_after_support(self, fetch_fulltext, check_paragraph):
+        fetch_fulltext.return_value = {
+            "source": "PMC XML",
+            "source_url": "https://example.test/fulltext",
+            "paragraphs": [
+                {"section": "Methods", "text": "Unrelated methods paragraph " * 8, "page": None},
+                {"section": "Results", "text": "Drug A significantly reduced inflammation in the treated group. " * 3, "page": None},
+                {"section": "Discussion", "text": "A later paragraph should never be checked. " * 4, "page": None},
+            ],
+        }
+        check_paragraph.side_effect = [
+            {"decision": "不支持", "reason": "没有直接证据", "api_called": True},
+            {"decision": "支持", "reason": "结果段直接报告该效应", "api_called": True},
+        ]
+        base = {
+            "filename": "paper.xml",
+            "results": [
+                {
+                    "rid": "B1", "label": "1", "sentence_text": "Drug A reduced inflammation.",
+                    "title": "Drug A study", "result": "存疑", "reason": "摘要证据不足",
+                },
+                {
+                    "rid": "B2", "label": "2", "sentence_text": "A known claim.",
+                    "title": "Known study", "result": "匹配", "reason": "摘要支持",
+                },
+            ],
+        }
+        prepared = prepare_fulltext_review(base, max_paragraphs=3, max_workers=1)
+        self.assertEqual(prepared["doubtful_count"], 1)
+        self.assertEqual(prepared["fulltexts_found"], 1)
+        self.assertEqual(prepared["estimated_calls"], 3)
+
+        # Execution preserves this ranked order and must stop before candidate 3.
+        prepared["review_items"][0]["candidates"] = [
+            {"section": "Methods", "text": "First candidate has no direct evidence.", "page": 1},
+            {"section": "Results", "text": "Drug A significantly reduced inflammation in the treated group.", "page": 2},
+            {"section": "Discussion", "text": "This candidate must not be sent.", "page": 3},
+        ]
+
+        reviewed = execute_fulltext_review(prepared, max_workers=1)
+        self.assertEqual(check_paragraph.call_count, 2)
+        self.assertEqual(reviewed["actual_calls"], 2)
+        self.assertEqual(reviewed["results"][0]["result"], "匹配")
+        self.assertIn("Drug A significantly", reviewed["results"][0]["evidence_text"])
+        self.assertEqual(reviewed["results"][1]["result"], "匹配")
+        self.assertIn("全文复核", reviewed["html"])
 
 
 if __name__ == "__main__":
